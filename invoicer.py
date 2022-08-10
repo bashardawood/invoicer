@@ -2,6 +2,8 @@ import os
 import json
 import telebot
 import smtplib
+import shutil
+import datetime
 from os.path import basename
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -63,10 +65,12 @@ def handleMessage(msg):
         return open("/root/invoices.txt", 'r').read().replace("\n", "\n\n")
 
     elif "finish" in msg.text.replace(" ", "") or "Finish" in msg.text.replace(" ", ""):
-        send_mail(sent_from, to, "Final Invoice", "Final invoice for this month", ["/root/invoices.txt"])
-        file = open("/root/invoices.txt", 'w')
-        file.write("Invoices\n")
-        file.close()
+        #send_mail(sent_from, to, "Final Invoice", "Final invoice for this month", ["/root/invoices.txt"])
+        shutil.copy("/root/invoices.txt", "/root/invoices_history")
+        os.rename("/root/invoices_history/invoices.txt", "/root/invoices_history/invoices_" + str(datetime.datetime.today()).replace(" ", "") +".txt") 
+        #file = open("/root/invoices.txt", 'w')
+        #file.write("Invoices\n")
+        #file.close()
         return "Ok, i've sent the email containing the finalized invoice to " + str(to)
 
     elif "delete" in msg.text.replace(" ", "") or "Delete" in msg.text.replace(" ", ""):
@@ -87,6 +91,7 @@ bot = telebot.TeleBot(api_key)
 
 @bot.message_handler(func=lambda message: True)
 def all(message):
+    print(message.chat.id)
     if message.chat.id in authorized:
         status = handleMessage(message)
         if status != "":
