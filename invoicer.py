@@ -1,12 +1,6 @@
-#dependencies:
-# python-gsmmodem-new : https://github.com/babca/python-gsmmodem
-
-from __future__ import print_function
-
-import logging
-
 import os
-
+import json
+import telebot
 import smtplib
 from os.path import basename
 from email.mime.application import MIMEApplication
@@ -14,21 +8,20 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import COMMASPACE, formatdate
 
-from gsmmodem.modem import GsmModem
+conf = json.loads(open('/home/invoicer/.env', 'r').read())
 
-gmail_user = 'your_email@gmail.com'
-gmail_password = 'your_password'
+api_key = conf['TELEGRAM']['API_KEY']
+authorized = conf['TELEGRAM']['AUTHORIZED']
+
+gmail_user = conf['GMAIL']['USER']
+gmail_password = conf['GMAIL']['PASSWORD']
+server = conf['GMAIL']['SERVER']
 
 sent_from = gmail_user
-to = ['recipient@gmail.com']
-
-
-PORT = '/dev/ttyACM0' #check what dev your modem is
-BAUDRATE = 9600
-PIN = None # SIM card PIN (if any)
+to = [gmail_user]
 
 def send_mail(send_from, send_to, subject, text, files=None,
-              server="smtp.gmail.com"):
+              server=server):
     assert isinstance(send_to, list)
 
     msg = MIMEMultipart()
@@ -56,23 +49,27 @@ def send_mail(send_from, send_to, subject, text, files=None,
     smtp.sendmail(send_from, send_to, msg.as_string())
     smtp.close()
 
-def handleSms(sms):
-    print(u'== SMS message received ==\nFrom: {0}\nTime: {1}\nMessage:\n{2}\n'.format(sms.number, sms.time, sms.text))
+def handleMessage(msg):
+    print(u'== message received ==\nFrom: {0}\nMessage:\n{1}\n'.format(msg.chat.id, msg.text))
 
-    if len(sms.text) > 10:
+    if len(msg.text) > 10:
+        if msg.text.count(',') != 2:
+            return "Wrong format. Try checking the ( , ) symbol"
         with open("/root/invoices.txt", "a") as file:
-            file.write(sms.text + "\n")
-        send_mail(sent_from, to, "Inserted New Job", "A new job has been inserted into the invoice: " + sms.text, ["/root/invoices.txt"])
-        return
+            file.write(msg.text + "\n")
+        return "New job: " + msg.text
 
-    if "check" in sms.text.replace(" ", "") or "Check" in sms.text.replace(" ", ""):
-	send_mail(sent_from, to, "Check Current Invoice", "The current invoice is attached in this email", ["/root/invoices.txt"])
-    elif "finish" in sms.text.replace(" ", "") or "Finish" in sms.text.replace(" ", ""):
+    if "check" in msg.text.replace(" ", "") or "Check" in msg.text.replace(" ", ""):
+        return open("/root/invoices.txt", 'r').read().replace("\n", "\n\n")
+
+    elif "finish" in msg.text.replace(" ", "") or "Finish" in msg.text.replace(" ", ""):
         send_mail(sent_from, to, "Final Invoice", "Final invoice for this month", ["/root/invoices.txt"])
-	file = open("/root/invoices.txt", 'w')
+        file = open("/root/invoices.txt", 'w')
         file.write("Invoices\n")
         file.close()
-    elif "delete" in sms.text.replace(" ", "") or "Delete" in sms.text.replace(" ", ""):
+        return "Ok, i've sent the email containing the finalized invoice to " + str(to)
+
+    elif "delete" in msg.text.replace(" ", "") or "Delete" in msg.text.replace(" ", ""):
         with open("/root/invoices.txt", "r+") as file:
             file.seek(0, os.SEEK_END)
             pos = file.tell() - 1
@@ -82,21 +79,24 @@ def handleSms(sms):
             if pos > 0:
                 file.seek(pos, os.SEEK_SET)
                 file.truncate()
-        send_mail(sent_from, to, "Last Job Deleted", "The last job sent has been deleted")
-    #send_mail(sent_from, to, "confirming SMS", sms.text)
+            with open("/root/invoices.txt", "a") as file:
+                file.write("\n")
+        return "The last job sent has been deleted"
 
-def main():
-    print('Initializing modem...')
-    # Uncomment the following line to see what the modem is doing:
-    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.DEBUG)
-    modem = GsmModem(PORT, BAUDRATE, smsReceivedCallbackFunc=handleSms)
-    modem.smsTextMode = False 
-    modem.connect(PIN)
-    print('Waiting for SMS message...')    
-    try:    
-        modem.rxThread.join(2**31) # Specify a (huge) timeout so that it essentially blocks indefinitely, but still receives CTRL+C interrupt signal
-    finally:
-        modem.close();
+bot = telebot.TeleBot(api_key)
 
-if __name__ == '__main__':
-    main()
+@bot.message_handler(func=lambda message: True)
+def all(message):
+    if message.chat.id in authorized:
+        status = handleMessage(message)
+        if status != "":
+            bot.send_message(message.chat.id, status)
+        else:
+            bot.send_message(message.chat.id, "Ok")
+
+    else:
+        bot.send_message(message.chat.id, "You aren't allowed here")
+
+
+bot.polling()
+
